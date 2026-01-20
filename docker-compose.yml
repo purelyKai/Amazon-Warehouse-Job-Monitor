@@ -1,0 +1,15 @@
+services:
+  amazon-monitor:
+    build: .
+    container_name: amazon_monitor
+    restart: always
+    env_file: .env
+    ipc: host
+    shm_size: "2gb"
+    volumes:
+      - ./seen_jobs.json:/app/seen_jobs.json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"

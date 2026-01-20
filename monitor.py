@@ -1,0 +1,105 @@
+from urllib import response
+import requests
+import json
+import time
+import os
+from dotenv import load_dotenv
+from scraper import AmazonSession
+from notifier import send_email_alert
+
+load_dotenv()
+
+# Configuration
+CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", 600))
+TARGET_CITY = os.getenv("TARGET_CITY", "Las Vegas")
+TARGET_STATE = os.getenv("TARGET_STATE", "NV")
+TARGET_JOB_TITLE = os.getenv("TARGET_JOB_TITLE", "Amazon Fulfillment Center Warehouse Associate")
+
+DB_FILE = "seen_jobs.json"
+GRAPHQL_ENDPOINT = "https://e5mquma77feepi2bdn4d6h3mpu.appsync-api.us-east-1.amazonaws.com/graphql"
+
+def load_seen_jobs():
+    if not os.path.exists(DB_FILE):
+        with open(DB_FILE, 'w') as f:
+            json.dump([], f)
+    with open(DB_FILE, 'r') as f:
+        return set(json.load(f))
+
+def save_seen_jobs(seen_set):
+    with open(DB_FILE, 'w') as f:
+        json.dump(list(seen_set), f)
+
+def get_headers(token):
+    return {
+        "authorization": token,
+        "content-type": "application/json",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "country": "United States",
+        "iscanary": "false",
+        "priority": "u=1, i",
+        "sec-ch-ua-platform": '"Windows"',
+        "referrer": "https://hiring.amazon.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+def get_payload():
+    """Generates the GraphQL payload"""
+    return {
+        "operationName": "searchJobCardsByLocation",
+        "variables": {
+            "searchJobRequest": {
+                "locale": "en-US",
+                "country": "United States",
+                "equalFilters": [
+                    {"key": "city", "val": TARGET_CITY},
+                    {"key": "state", "val": TARGET_STATE}
+                ],
+                "containFilters": [
+                    {"key": "jobTitle", "val": [TARGET_JOB_TITLE]}
+                ],
+                "pageSize": 20
+            }
+        },
+        "query": "query searchJobCardsByLocation($searchJobRequest: SearchJobRequest!) { searchJobCardsByLocation(searchJobRequest: $searchJobRequest) { jobCards { jobId jobTitle locationName } } }"
+    }
+
+def run_monitor():
+    session_manager = AmazonSession()
+    seen_jobs = load_seen_jobs()
+    token = session_manager.get_fresh_token()
+
+    while True:
+        print(f"[{time.strftime('%H:%M:%S')}] Checking for '{TARGET_JOB_TITLE}' in {TARGET_CITY}...")
+        
+        try:
+            response = requests.post(GRAPHQL_ENDPOINT, json=get_payload(), headers=get_headers(token))
+            
+            if response.status_code in [401, 403]:
+                print(f"Token rejected (Status {response.status_code}). Refreshing in 10s...")
+                time.sleep(10) # Prevent rapid-fire loops
+                token = session_manager.get_fresh_token()
+                continue
+
+            jobs = response.json().get("data", {}).get("searchJobCardsByLocation", {}).get("jobCards", [])
+
+            new_found = False
+            for job in jobs:
+                if job['jobId'] not in seen_jobs:
+                    print(f"New job found! {job['jobId']}")
+                    send_email_alert(job['jobTitle'], job['locationName'], job['jobId'])
+                    seen_jobs.add(job['jobId'])
+                    new_found = True
+            
+            if new_found:
+                save_seen_jobs(seen_jobs)
+            else:
+                print("No new jobs found.")
+
+        except Exception as e:
+            print(f"Error occurred: {e}")
+
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+if __name__ == "__main__":
+    run_monitor()
