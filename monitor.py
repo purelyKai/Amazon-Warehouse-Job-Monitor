@@ -10,10 +10,12 @@ from notifier import send_email_alert
 load_dotenv()
 
 # Configuration
-CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", 600))
-TARGET_CITY = os.getenv("TARGET_CITY", "Las Vegas")
-TARGET_STATE = os.getenv("TARGET_STATE", "NV")
-TARGET_JOB_TITLE = os.getenv("TARGET_JOB_TITLE", "Amazon Fulfillment Center Warehouse Associate")
+CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", 300))
+LAT = float(os.getenv("TARGET_LAT", 36.1690921))
+LNG = float(os.getenv("TARGET_LNG", -115.1405767))
+DISTANCE_MILES = int(os.getenv("TARGET_DISTANCE_MILES", 50))
+raw_job_titles = os.getenv("TARGET_JOB_TITLES", "Amazon Fulfillment Center Warehouse Associate")
+TARGET_JOB_LIST = [title.strip() for title in raw_job_titles.split(",")]
 
 DB_FILE = "seen_jobs.json"
 GRAPHQL_ENDPOINT = "https://e5mquma77feepi2bdn4d6h3mpu.appsync-api.us-east-1.amazonaws.com/graphql"
@@ -23,7 +25,10 @@ def load_seen_jobs():
         with open(DB_FILE, 'w') as f:
             json.dump([], f)
     with open(DB_FILE, 'r') as f:
-        return set(json.load(f))
+        try:
+            return set(json.load(f))
+        except json.JSONDecodeError:
+            return set()
 
 def save_seen_jobs(seen_set):
     with open(DB_FILE, 'w') as f:
@@ -51,13 +56,14 @@ def get_payload():
             "searchJobRequest": {
                 "locale": "en-US",
                 "country": "United States",
-                "equalFilters": [
-                    {"key": "city", "val": TARGET_CITY},
-                    {"key": "state", "val": TARGET_STATE}
-                ],
                 "containFilters": [
-                    {"key": "jobTitle", "val": [TARGET_JOB_TITLE]}
+                    {"key": "jobTitle", "val": TARGET_JOB_LIST}
                 ],
+                "geoQueryClause": {
+                    "lat": LAT,
+                    "lng": LNG,
+                    "distance": DISTANCE_MILES,
+                    "unit":"mi"},
                 "pageSize": 20
             }
         },
@@ -70,7 +76,8 @@ def run_monitor():
     token = session_manager.get_fresh_token()
 
     while True:
-        print(f"[{time.strftime('%H:%M:%S')}] Checking for '{TARGET_JOB_TITLE}' in {TARGET_CITY}...")
+        titles_str = ", ".join(TARGET_JOB_LIST)
+        print(f"[{time.strftime('%H:%M:%S')}] Checking for [{titles_str}] within {DISTANCE_MILES} miles of ({LAT}, {LNG})...")
         
         try:
             response = requests.post(GRAPHQL_ENDPOINT, json=get_payload(), headers=get_headers(token))
@@ -86,7 +93,7 @@ def run_monitor():
             new_found = False
             for job in jobs:
                 if job['jobId'] not in seen_jobs:
-                    print(f"New job found! {job['jobId']}")
+                    print(f"New job found! {job['jobTitle']} - {job['locationName']} - {job['jobId']}")
                     send_email_alert(job['jobTitle'], job['locationName'], job['jobId'])
                     seen_jobs.add(job['jobId'])
                     new_found = True
