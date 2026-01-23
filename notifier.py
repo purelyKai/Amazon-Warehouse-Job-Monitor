@@ -33,13 +33,11 @@ def send_email_alert(job_title, location, job_id):
                 message["To"] = receiver_email
                 message["Subject"] = f"🚨 New Amazon Job: {job_title} in {location}"
 
-                body = f"""
-                Role: {job_title}
-                Location: {location}
-                Job ID: {job_id}
-                
-                Link to Apply: {job_url}
-                """
+                body = f"""Role: {job_title}
+Location: {location}
+Job ID: {job_id}
+
+Link to Apply: {job_url}"""
                 message.attach(MIMEText(body, "plain"))
                 
                 server.send_message(message)
