@@ -18,7 +18,7 @@ raw_job_titles = os.getenv("TARGET_JOB_TITLES", "Amazon Fulfillment Center Wareh
 TARGET_JOB_LIST = [title.strip() for title in raw_job_titles.split(",")]
 
 DB_FILE = "seen_jobs.json"
-GRAPHQL_ENDPOINT = "https://e5mquma77feepi2bdn4d6h3mpu.appsync-api.us-east-1.amazonaws.com/graphql"
+GRAPHQL_ENDPOINT = "https://hiring.amazon.com/graphql"
 
 def load_seen_jobs():
     if not os.path.exists(DB_FILE):
@@ -74,6 +74,12 @@ def run_monitor():
     session_manager = AmazonSession()
     seen_jobs = load_seen_jobs()
     token = session_manager.get_fresh_token()
+    
+    if not token:
+        print("ERROR: Failed to obtain initial token. Cannot proceed.")
+        print("This usually means Amazon changed their website structure.")
+        print("Try running the container with updated dependencies or check if the website is accessible.")
+        return
 
     while True:
         titles_str = ", ".join(TARGET_JOB_LIST)
@@ -83,9 +89,16 @@ def run_monitor():
             response = requests.post(GRAPHQL_ENDPOINT, json=get_payload(), headers=get_headers(token))
             
             if response.status_code in [401, 403]:
-                print(f"Token rejected (Status {response.status_code}). Refreshing in 10s...")
+                print(f"Token rejected (Status {response.status_code}). Attempting to refresh...")
                 time.sleep(10) # Prevent rapid-fire loops
-                token = session_manager.get_fresh_token()
+                new_token = session_manager.get_fresh_token()
+                if new_token:
+                    token = new_token
+                    print("✓ Token refreshed successfully")
+                else:
+                    print("✗ Failed to refresh token - Amazon may have changed their website")
+                    print("Waiting 60 seconds before retry...")
+                    time.sleep(60)
                 continue
 
             jobs = response.json().get("data", {}).get("searchJobCardsByLocation", {}).get("jobCards", [])
