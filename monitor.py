@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from scraper import AmazonSession
 from notifier import send_email_alert
+from test_email import send_test_email
 
 load_dotenv()
 
@@ -71,6 +72,18 @@ def get_payload():
     }
 
 def run_monitor():
+    # Send test email on startup
+    print("=" * 60)
+    print("  SENDING STARTUP TEST EMAIL")
+    print("=" * 60)
+    print()
+    send_test_email()
+    print()
+    print("=" * 60)
+    print("  STARTING JOB MONITOR")
+    print("=" * 60)
+    print()
+    
     session_manager = AmazonSession()
     seen_jobs = load_seen_jobs()
     token = session_manager.get_fresh_token()
